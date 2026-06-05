@@ -32,3 +32,34 @@ export const uploadDocumentMiddleware = multer({
     }
   },
 }).single('file');
+
+const GLB_TYPES = ['model/gltf-binary', 'application/octet-stream'];
+
+export const uploadModelMiddleware = multer({
+  storage,
+  limits: { fileSize: MAX_SIZE },
+  fileFilter(_req, file, cb) {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    if (GLB_TYPES.includes(file.mimetype) || ext === 'glb') {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Use GLB only.'));
+    }
+  },
+}).single('file');
+
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg'];
+const VIDEO_MAX_SIZE = 100 * 1024 * 1024; // 100MB
+
+export const uploadVideoMiddleware = multer({
+  storage,
+  limits: { fileSize: VIDEO_MAX_SIZE },
+  fileFilter(_req, file, cb) {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    if (VIDEO_TYPES.includes(file.mimetype) || ext === 'mp4' || ext === 'webm' || ext === 'mov') {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Use MP4, WebM, or MOV.'));
+    }
+  },
+}).single('file');

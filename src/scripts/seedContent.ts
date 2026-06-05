@@ -268,6 +268,17 @@ const DEFAULT_CONTENT: SeedEntry[] = [
   { key: 'home.about.ctaLink', value: '/about', type: 'text' },
   { key: 'home.about.image', value: '/assets/home/rimage.png', type: 'image' },
   { key: 'home.about.backgroundImage', value: '/assets/home/bgimage.png', type: 'image' },
+  // Home – Services Provided section
+  { key: 'home.services.image', value: '/assets/home/image 1.png', type: 'image' },
+  { key: 'home.services.subtitle', value: 'Services Provided by us', type: 'text' },
+  {
+    key: 'home.services.description',
+    value:
+      'From sports arenas to studios, our acoustic and flooring solutions transform spaces into high-functioning, visually striking environments.',
+    type: 'text',
+  },
+  { key: 'home.services.ctaText', value: 'Learn More', type: 'text' },
+  { key: 'home.services.ctaLink', value: '/about', type: 'text' },
   // About page images
   { key: 'about.content.storyImage1', value: '/assets/about/Image (1).png', type: 'image' },
   { key: 'about.content.storyImage2', value: '/assets/about/Image (2).png', type: 'image' },
@@ -275,7 +286,8 @@ const DEFAULT_CONTENT: SeedEntry[] = [
   { key: 'about.content.craftImage2', value: '/assets/about/Image (4).png', type: 'image' },
   { key: 'about.founder.image', value: '/assets/about/Image (5).png', type: 'image' },
   { key: 'about.foundation.image', value: '/assets/about/bgfoundation.png', type: 'image' },
-  { key: 'about.innovation.image', value: '/innovation-video.jpg', type: 'image' },
+  { key: 'about.innovation.image', value: '', type: 'image' },
+  { key: 'about.innovation.video', value: '', type: 'video' },
   // Home – Our Products section showcase images
   { key: 'home.ourProduct.product1Image', value: '/assets/home/homeone.png', type: 'image' },
   { key: 'home.ourProduct.product1Title', value: 'Slat', type: 'text' },

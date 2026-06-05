@@ -13,9 +13,9 @@ import type {
   SubProductAboutTab,
   SubProductCertification,
   SubProductFinishesSection,
+  VisualizerItem,
+  VisualizerItemProfile,
   VisualizerTexture,
-  VisualizerDimensions,
-  VisualizerHoleProfile,
 } from '../types/index.js';
 
 const SLUG_REGEX = /^[a-zA-Z0-9-]+$/;
@@ -218,48 +218,7 @@ class ProductValidationError extends Error {
   }
 }
 
-function formatNum(v: number): string {
-  return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2)));
-}
-
-function normalizeHoleProfileName(rawName: string, hole: number, spacing: number): string {
-  const candidate = rawName.trim();
-  // Always store a canonical label like 9/18x18 so frontend/admin remain consistent.
-  const normalized = `${formatNum(hole)}/${formatNum(spacing)}x${formatNum(spacing)}`;
-  if (!candidate) return normalized;
-  return normalized;
-}
-
-function validateVisualizerHoleProfile(raw: unknown, path: string): VisualizerHoleProfile {
-  if (!raw || typeof raw !== 'object') {
-    throw new ProductValidationError(`${path} must be an object`);
-  }
-  const o = raw as Record<string, unknown>;
-  const name = typeof o.name === 'string' ? o.name.trim() : '';
-  const hole = num(o.hole, NaN);
-  const spacing = num(o.spacing, NaN);
-  const thumbnail =
-    typeof o.thumbnail === 'string' && o.thumbnail.trim() ? o.thumbnail.trim() : undefined;
-  if (!Number.isFinite(hole) || hole <= 0) {
-    throw new ProductValidationError(`${path}.hole must be a positive number`);
-  }
-  if (!Number.isFinite(spacing) || spacing <= 0) {
-    throw new ProductValidationError(`${path}.spacing must be a positive number`);
-  }
-  if (hole >= spacing) {
-    throw new ProductValidationError(
-      `${path} is invalid: hole (${formatNum(hole)}mm) must be smaller than spacing (${formatNum(spacing)}mm)`
-    );
-  }
-  return {
-    name: normalizeHoleProfileName(name, hole, spacing),
-    hole,
-    spacing,
-    thumbnail,
-  };
-}
-
-function validateVisualizerTexture(raw: unknown, path: string): VisualizerTexture {
+function validateVisualizerItemProfile(raw: unknown, path: string): VisualizerItemProfile {
   if (!raw || typeof raw !== 'object') {
     throw new ProductValidationError(`${path} must be an object`);
   }
@@ -268,14 +227,57 @@ function validateVisualizerTexture(raw: unknown, path: string): VisualizerTextur
   const image = typeof o.image === 'string' ? o.image.trim() : '';
   if (!name) throw new ProductValidationError(`${path}.name is required`);
   if (!image) throw new ProductValidationError(`${path}.image is required`);
-  const profiles: VisualizerHoleProfile[] = [];
-  if (!Array.isArray(o.profiles) || o.profiles.length === 0) {
-    throw new ProductValidationError(`${path}.profiles must contain at least one profile`);
+  return { name, image };
+}
+
+function validateVisualizerItem(raw: unknown, path: string): VisualizerItem {
+  if (!raw || typeof raw !== 'object') {
+    throw new ProductValidationError(`${path} must be an object`);
   }
-  for (let i = 0; i < o.profiles.length; i++) {
-    profiles.push(validateVisualizerHoleProfile(o.profiles[i], `${path}.profiles[${i}]`));
+  const o = raw as Record<string, unknown>;
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  const thumbnail = typeof o.thumbnail === 'string' ? o.thumbnail.trim() : '';
+  const glb = typeof o.glb === 'string' ? o.glb.trim() : '';
+  const description =
+    typeof o.description === 'string' && o.description.trim() ? o.description.trim() : undefined;
+  if (!name) throw new ProductValidationError(`${path}.name is required`);
+  if (!thumbnail) throw new ProductValidationError(`${path}.thumbnail is required`);
+  if (!glb) throw new ProductValidationError(`${path}.glb is required`);
+
+  const item: VisualizerItem = { name, thumbnail, glb, description };
+  if ('profiles' in o && Array.isArray(o.profiles)) {
+    const profiles: VisualizerItemProfile[] = [];
+    for (let i = 0; i < o.profiles.length; i++) {
+      try {
+        profiles.push(validateVisualizerItemProfile(o.profiles[i], `${path}.profiles[${i}]`));
+      } catch {
+        // Skip incomplete profile rows (admin may leave blanks while editing).
+      }
+    }
+    if (profiles.length > 0) item.profiles = profiles;
   }
-  return { name, image, profiles };
+  return item;
+}
+
+/** Flatten legacy visualizerTextures into visualizerItems for API responses. */
+function resolveVisualizerItems(p: Product): VisualizerItem[] | undefined {
+  if (Array.isArray(p.visualizerItems) && p.visualizerItems.length > 0) {
+    return p.visualizerItems;
+  }
+  const legacy = (p as Product & { visualizerTextures?: VisualizerTexture[] }).visualizerTextures;
+  if (!Array.isArray(legacy) || legacy.length === 0) return undefined;
+  const items: VisualizerItem[] = [];
+  for (const texture of legacy) {
+    for (const profile of texture.profiles ?? []) {
+      const thumbnail = profile.thumbnail?.trim() || texture.image?.trim() || '';
+      const glb = profile.glb?.trim() || '';
+      const name = profile.name?.trim() || texture.name?.trim() || '';
+      if (name && thumbnail && glb) {
+        items.push({ name, thumbnail, glb });
+      }
+    }
+  }
+  return items.length > 0 ? items : undefined;
 }
 
 /** Optional detail sections (specs, gallery, profiles, …) from request body */
@@ -369,18 +371,6 @@ function applyRichProductFields(
     else delete doc.finishesSection;
   }
 
-  if ('visualizerDimensions' in o && o.visualizerDimensions && typeof o.visualizerDimensions === 'object') {
-    const vd = o.visualizerDimensions as Record<string, unknown>;
-    const width = num(vd.width, 120);
-    const height = num(vd.height, 60);
-    const depth = num(vd.depth, 4);
-    doc.visualizerDimensions = {
-      width: width > 0 ? width : 120,
-      height: height > 0 ? height : 60,
-      depth: depth > 0 ? depth : 4,
-    };
-  }
-
   if ('visualizerTitle' in o) {
     const t = typeof o.visualizerTitle === 'string' ? o.visualizerTitle.trim() : '';
     doc.visualizerTitle = t || undefined;
@@ -389,20 +379,13 @@ function applyRichProductFields(
     const t = typeof o.visualizerDescription === 'string' ? o.visualizerDescription.trim() : '';
     doc.visualizerDescription = t || undefined;
   }
-  if ('visualizerTechnicalCaption' in o) {
-    const t =
-      typeof o.visualizerTechnicalCaption === 'string' ? o.visualizerTechnicalCaption.trim() : '';
-    doc.visualizerTechnicalCaption = t || undefined;
-  }
 
-  if ('visualizerTextures' in o && Array.isArray(o.visualizerTextures)) {
-    const textures: VisualizerTexture[] = [];
-    for (let i = 0; i < o.visualizerTextures.length; i++) {
-      const item = o.visualizerTextures[i];
-      const vt = validateVisualizerTexture(item, `visualizerTextures[${i}]`);
-      textures.push(vt);
+  if ('visualizerItems' in o && Array.isArray(o.visualizerItems)) {
+    const items: VisualizerItem[] = [];
+    for (let i = 0; i < o.visualizerItems.length; i++) {
+      items.push(validateVisualizerItem(o.visualizerItems[i], `visualizerItems[${i}]`));
     }
-    doc.visualizerTextures = textures;
+    doc.visualizerItems = items;
   }
 }
 
@@ -509,11 +492,9 @@ function productToPublicFull(p: Product) {
     certificationsSectionDescription: p.certificationsSectionDescription,
     certifications: p.certifications,
     finishesSection: p.finishesSection,
-    visualizerTextures: p.visualizerTextures,
-    visualizerDimensions: p.visualizerDimensions,
     visualizerTitle: p.visualizerTitle,
     visualizerDescription: p.visualizerDescription,
-    visualizerTechnicalCaption: p.visualizerTechnicalCaption,
+    visualizerItems: resolveVisualizerItems(p),
   };
 }
 
@@ -556,6 +537,9 @@ export async function listCategories(req: Request, res: Response): Promise<void>
       name: c.name,
       description: c.description,
       image: c.image,
+      heroImage: c.heroImage,
+      heroHeading: c.heroHeading,
+      heroDescription: c.heroDescription,
       order: c.order ?? 0,
       tagline: c.tagline,
       metaTitle: c.metaTitle,
@@ -594,6 +578,9 @@ export async function getCategoryBySlug(req: Request, res: Response): Promise<vo
         name: category.name,
         description: category.description,
         image: category.image,
+        heroImage: category.heroImage,
+        heroHeading: category.heroHeading,
+        heroDescription: category.heroDescription,
         order: category.order ?? 0,
         tagline: category.tagline,
         metaTitle: category.metaTitle,
@@ -852,5 +839,95 @@ export async function proxyVisualizerTexture(req: Request, res: Response): Promi
   } catch (err) {
     console.error('proxyVisualizerTexture error:', err);
     res.status(500).json({ error: 'Failed to proxy image' });
+  }
+}
+
+const MODEL_PROXY_MAX_BYTES = 50 * 1024 * 1024;
+
+function isAllowedModelContentType(ct: string): boolean {
+  const lower = ct.toLowerCase();
+  return (
+    lower.startsWith('model/') ||
+    lower === 'application/octet-stream' ||
+    lower.includes('gltf')
+  );
+}
+
+/**
+ * Public: GET /api/products/model-proxy?url=...
+ * Fetches a remote GLB/GLTF and streams it with CORS for Three.js GLTFLoader.
+ */
+export async function proxyVisualizerModel(req: Request, res: Response): Promise<void> {
+  const raw = req.query['url'];
+  if (typeof raw !== 'string' || !raw.trim()) {
+    res.status(400).json({ error: 'Missing url query parameter' });
+    return;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    res.status(400).json({ error: 'Invalid URL' });
+    return;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    res.status(400).json({ error: 'Only http(s) URLs are allowed' });
+    return;
+  }
+
+  const host = parsed.hostname;
+  if (isBlockedTextureHostname(host)) {
+    res.status(400).json({ error: 'Host not allowed' });
+    return;
+  }
+  if (!isTextureProxyHostAllowed(host)) {
+    res.status(403).json({
+      error:
+        'Model host not allowed for proxy. Set TEXTURE_PROXY_ALLOWED_HOSTS (comma-separated) on the server.',
+    });
+    return;
+  }
+
+  try {
+    const upstream = await fetch(parsed.href, {
+      redirect: 'follow',
+      headers: { Accept: 'model/gltf-binary,model/gltf+json,*/*;q=0.8' },
+    });
+
+    if (!upstream.ok) {
+      res.status(502).json({ error: `Upstream returned ${upstream.status}` });
+      return;
+    }
+
+    const lenHeader = upstream.headers.get('content-length');
+    if (lenHeader) {
+      const n = parseInt(lenHeader, 10);
+      if (!Number.isNaN(n) && n > MODEL_PROXY_MAX_BYTES) {
+        res.status(413).json({ error: 'Model too large' });
+        return;
+      }
+    }
+
+    const ct = upstream.headers.get('content-type') || 'model/gltf-binary';
+    if (!isAllowedModelContentType(ct)) {
+      res.status(400).json({ error: 'URL did not return a 3D model' });
+      return;
+    }
+
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    if (buf.length > MODEL_PROXY_MAX_BYTES) {
+      res.status(413).json({ error: 'Model too large' });
+      return;
+    }
+
+    res.setHeader('Content-Type', ct.startsWith('model/') ? ct : 'model/gltf-binary');
+    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.send(buf);
+  } catch (err) {
+    console.error('proxyVisualizerModel error:', err);
+    res.status(500).json({ error: 'Failed to proxy model' });
   }
 }

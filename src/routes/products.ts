@@ -4,14 +4,15 @@ import * as productController from '../controllers/productController.js';
 const router = Router();
 
 /**
- * Product detail includes `visualizerTextures[]`: each item has `name`, `image`, and nested
- * `profiles[]` with `name`, `hole` (mm), `spacing` (mm), optional `thumbnail`.
- * Panel size is `visualizerDimensions` (cm). Copy: `visualizerTitle`, `visualizerDescription`,
- * `visualizerTechnicalCaption`.
+ * Product detail includes `visualizerItems[]`: each item has `name`, `thumbnail`, and `glb`.
+ * Copy: `visualizerTitle`, `visualizerDescription`.
  */
 
 /** Public: proxy remote texture URLs for WebGL (CORS). Must be registered before param routes. */
 router.get('/texture-proxy', productController.proxyVisualizerTexture);
+
+/** Public: proxy remote GLB/GLTF URLs for Three.js (CORS). */
+router.get('/model-proxy', productController.proxyVisualizerModel);
 
 /** Public: list all categories (for nav / products overview) */
 router.get('/categories', productController.listCategories);

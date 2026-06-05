@@ -20,11 +20,27 @@ function validateCategoryBody(
   if (!name) return { error: 'name is required' };
   const description = typeof body.description === 'string' ? body.description.trim() : undefined;
   const image = typeof body.image === 'string' ? body.image.trim() : undefined;
+  const heroImage = typeof body.heroImage === 'string' ? body.heroImage.trim() : undefined;
+  const heroHeading = typeof body.heroHeading === 'string' ? body.heroHeading.trim() : undefined;
+  const heroDescription =
+    typeof body.heroDescription === 'string' ? body.heroDescription.trim() : undefined;
   const order = typeof body.order === 'number' ? body.order : 0;
   const tagline = typeof body.tagline === 'string' ? body.tagline.trim() || undefined : undefined;
   const metaTitle = typeof body.metaTitle === 'string' ? body.metaTitle.trim() || undefined : undefined;
   const metaDescription = typeof body.metaDescription === 'string' ? body.metaDescription.trim() || undefined : undefined;
-  return { slug, name, description, image, order, tagline, metaTitle, metaDescription };
+  return {
+    slug,
+    name,
+    description,
+    image,
+    heroImage,
+    heroHeading,
+    heroDescription,
+    order,
+    tagline,
+    metaTitle,
+    metaDescription,
+  };
 }
 
 /** Admin: GET /api/admin/categories — includes products where product.categorySlug matches category.slug */
@@ -58,6 +74,9 @@ export async function listCategoriesAdmin(req: Request, res: Response): Promise<
         name: c.name,
         description: c.description,
         image: c.image,
+        heroImage: c.heroImage,
+        heroHeading: c.heroHeading,
+        heroDescription: c.heroDescription,
         order: c.order ?? 0,
         tagline: c.tagline,
         metaTitle: c.metaTitle,
@@ -101,6 +120,9 @@ export async function createCategory(req: Request, res: Response): Promise<void>
       name: inserted?.name,
       description: inserted?.description,
       image: inserted?.image,
+      heroImage: inserted?.heroImage,
+      heroHeading: inserted?.heroHeading,
+      heroDescription: inserted?.heroDescription,
       order: inserted?.order ?? 0,
       tagline: inserted?.tagline,
       metaTitle: inserted?.metaTitle,
@@ -149,6 +171,9 @@ export async function updateCategory(req: Request, res: Response): Promise<void>
           name: parsed.name,
           description: parsed.description,
           image: parsed.image,
+          heroImage: parsed.heroImage,
+          heroHeading: parsed.heroHeading,
+          heroDescription: parsed.heroDescription,
           order: parsed.order,
           tagline: parsed.tagline,
           metaTitle: parsed.metaTitle,
@@ -164,6 +189,9 @@ export async function updateCategory(req: Request, res: Response): Promise<void>
       name: updated?.name,
       description: updated?.description,
       image: updated?.image,
+      heroImage: updated?.heroImage,
+      heroHeading: updated?.heroHeading,
+      heroDescription: updated?.heroDescription,
       order: updated?.order ?? 0,
       tagline: updated?.tagline,
       metaTitle: updated?.metaTitle,

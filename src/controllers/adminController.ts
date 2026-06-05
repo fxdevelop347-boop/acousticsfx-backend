@@ -21,9 +21,11 @@ function validateBody(
     return { error: 'value is required' };
   if (typeof value !== 'string') return { error: 'value must be a string' };
   const v = value.trim();
-  const t = (type === 'image' ? 'image' : 'text') as ContentType;
-  if (t === 'image' && v.length > MAX_IMAGE_URL_LENGTH)
-    return { error: `image URL must be at most ${MAX_IMAGE_URL_LENGTH} characters` };
+  const t = (
+    type === 'image' ? 'image' : type === 'video' ? 'video' : 'text'
+  ) as ContentType;
+  if ((t === 'image' || t === 'video') && v.length > MAX_IMAGE_URL_LENGTH)
+    return { error: `${t} URL must be at most ${MAX_IMAGE_URL_LENGTH} characters` };
   if (v.length > MAX_VALUE_LENGTH)
     return { error: `value must be at most ${MAX_VALUE_LENGTH} characters` };
   return { value: v, type: t };

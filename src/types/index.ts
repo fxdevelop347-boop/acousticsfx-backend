@@ -98,6 +98,12 @@ export interface ProductCategory {
   name: string;
   description?: string;
   image?: string;
+  /** Full-width banner on /products/:categorySlug catalog pages */
+  heroImage?: string;
+  /** Main heading above the catalog hero image; wrap words in *asterisks* for italic */
+  heroHeading?: string;
+  /** Paragraph below the catalog hero heading */
+  heroDescription?: string;
   order?: number;
   /** Optional short tagline shown under category name */
   tagline?: string;
@@ -115,31 +121,35 @@ export interface SubProductSpec {
   value: string;
 }
 
-/** One perforation pattern (hole grid) for a given uploaded texture. */
-export interface VisualizerHoleProfile {
+/** Image + label shown when browsing profiles within one 3D item. */
+export interface VisualizerItemProfile {
   name: string;
-  /** Hole diameter in millimetres. */
-  hole: number;
-  /** Square-centre spacing in millimetres. */
-  spacing: number;
-  /** Optional swatch image for the profile picker (admin upload). */
-  thumbnail?: string;
+  image: string;
 }
 
-/**
- * One admin-uploaded surface texture; each texture carries its own perforation options.
- */
+/** One 3D visualizer entry — thumbnail + GLB model (mirrors finishes/shades). */
+export interface VisualizerItem {
+  name: string;
+  thumbnail: string;
+  glb: string;
+  description?: string;
+  profiles?: VisualizerItemProfile[];
+}
+
+/** @deprecated Legacy nested format — migrated to visualizerItems on read. */
+export interface VisualizerHoleProfile {
+  name: string;
+  hole: number;
+  spacing: number;
+  thumbnail?: string;
+  glb?: string;
+}
+
+/** @deprecated Legacy nested format — migrated to visualizerItems on read. */
 export interface VisualizerTexture {
   name: string;
   image: string;
   profiles: VisualizerHoleProfile[];
-}
-
-/** Panel outer dimensions for the 3D box (centimetres). */
-export interface VisualizerDimensions {
-  width: number;
-  height: number;
-  depth: number;
 }
 
 /** Gallery slide (large + small image) */
@@ -261,15 +271,10 @@ export interface Product {
   certificationsSectionDescription?: string;
   certifications?: SubProductCertification[];
   finishesSection?: SubProductFinishesSection;
-  /** 3D configurator: uploaded textures, each with nested hole profiles. */
-  visualizerTextures?: VisualizerTexture[];
-  /** Physical panel size (cm) for the WebGL box. */
-  visualizerDimensions?: VisualizerDimensions;
-  /** Section heading on the public 3D block. */
+  /** 3D visualizer: flat list of thumbnail + GLB pairs. */
   visualizerTitle?: string;
   visualizerDescription?: string;
-  /** Hint line under the canvas (e.g. drag to rotate). */
-  visualizerTechnicalCaption?: string;
+  visualizerItems?: VisualizerItem[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -293,7 +298,7 @@ export interface NewsletterSubscription {
 }
 
 /** Site content entry: key-value with optional type and audit fields */
-export type ContentType = 'text' | 'image';
+export type ContentType = 'text' | 'image' | 'video';
 
 export interface Content {
   _id?: ObjectId;

@@ -14,7 +14,12 @@ import * as footerLinkController from '../controllers/footerLinkController.js';
 import * as locationController from '../controllers/locationController.js';
 import * as faqController from '../controllers/faqController.js';
 import { requireAuth, requirePermission } from '../middleware/auth.js';
-import { uploadDocumentMiddleware, uploadImageMiddleware } from '../middleware/upload.js';
+import {
+  uploadDocumentMiddleware,
+  uploadImageMiddleware,
+  uploadModelMiddleware,
+  uploadVideoMiddleware,
+} from '../middleware/upload.js';
 import { PERMISSIONS } from '../lib/permissions.js';
 
 const router = Router();
@@ -58,6 +63,38 @@ router.post(
     });
   },
   uploadController.uploadDocument
+);
+
+/** Upload GLB 3D model to ImageKit. Requires resources:write. */
+router.post(
+  '/upload-model',
+  requirePermission(PERMISSIONS.RESOURCES_WRITE),
+  (req, res, next) => {
+    uploadModelMiddleware(req, res, (err) => {
+      if (err) {
+        res.status(400).json({ error: err.message || 'Invalid file' });
+        return;
+      }
+      next();
+    });
+  },
+  uploadController.uploadModel
+);
+
+/** Upload video (MP4, WebM, MOV) to ImageKit. Requires resources:write. */
+router.post(
+  '/upload-video',
+  requirePermission(PERMISSIONS.RESOURCES_WRITE),
+  (req, res, next) => {
+    uploadVideoMiddleware(req, res, (err) => {
+      if (err) {
+        res.status(400).json({ error: err.message || 'Invalid file' });
+        return;
+      }
+      next();
+    });
+  },
+  uploadController.uploadVideo
 );
 
 /** Admins CRUD – requires SYSTEM_MANAGE (super_admin only) */

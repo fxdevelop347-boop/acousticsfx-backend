@@ -123,3 +123,84 @@ export async function uploadDocument(req: Request, res: Response): Promise<void>
     res.status(500).json({ error: 'Failed to upload document' });
   }
 }
+
+/**
+ * POST /api/admin/upload-model
+ * Expects multipart/form-data with field "file" (GLB). Returns { url } from ImageKit.
+ */
+export async function uploadModel(req: Request, res: Response): Promise<void> {
+  try {
+    const client = getImageKitClient();
+    if (!client) {
+      res.status(503).json({ error: 'File upload is not configured (ImageKit)' });
+      return;
+    }
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'No file provided. Use form field "file".' });
+      return;
+    }
+
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.glb`;
+    const uploadable = await toFile(file.buffer, fileName, {
+      type: file.mimetype === 'model/gltf-binary' ? file.mimetype : 'model/gltf-binary',
+    });
+
+    const result = await client.files.upload({
+      file: uploadable,
+      fileName,
+      folder: '/admin/models',
+    });
+
+    const url = (result as { url?: string }).url;
+    if (!url) {
+      res.status(500).json({ error: 'Upload succeeded but no URL returned' });
+      return;
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error('uploadModel error:', err);
+    res.status(500).json({ error: 'Failed to upload model' });
+  }
+}
+
+/**
+ * POST /api/admin/upload-video
+ * Expects multipart/form-data with field "file" (MP4, WebM, MOV). Returns { url } from ImageKit.
+ */
+export async function uploadVideo(req: Request, res: Response): Promise<void> {
+  try {
+    const client = getImageKitClient();
+    if (!client) {
+      res.status(503).json({ error: 'File upload is not configured (ImageKit)' });
+      return;
+    }
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'No file provided. Use form field "file".' });
+      return;
+    }
+
+    const ext = file.originalname.split('.').pop()?.toLowerCase() || 'mp4';
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+    const uploadable = await toFile(file.buffer, fileName, { type: file.mimetype });
+
+    const result = await client.files.upload({
+      file: uploadable,
+      fileName,
+      folder: '/admin/videos',
+    });
+
+    const url = (result as { url?: string }).url;
+    if (!url) {
+      res.status(500).json({ error: 'Upload succeeded but no URL returned' });
+      return;
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error('uploadVideo error:', err);
+    res.status(500).json({ error: 'Failed to upload video' });
+  }
+}
