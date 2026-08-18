@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ObjectId } from 'mongodb';
 import { getBlogCollection } from '../models/Blog.js';
 import { getCaseStudyCollection } from '../models/CaseStudy.js';
+import { sanitizeArticleHtml, sanitizeStoryHtml } from '../lib/sanitizeHtml.js';
 import { getEventCollection } from '../models/Event.js';
 import type {
   Blog,
@@ -204,7 +205,8 @@ function validateBlogBody(body: Record<string, unknown>): Omit<Blog, '_id' | 'cr
   const authorId = typeof body.authorId === 'string' ? body.authorId.trim() || undefined : undefined;
   const authorEmail = typeof body.authorEmail === 'string' ? body.authorEmail.trim() || undefined : undefined;
   const excerpt = typeof body.excerpt === 'string' ? body.excerpt.trim() : undefined;
-  const content = typeof body.content === 'string' ? body.content : undefined;
+  // Rendered as HTML on the website, so it is sanitized before being stored.
+  const content = sanitizeArticleHtml(body.content);
   const authorImage = typeof body.authorImage === 'string' ? body.authorImage.trim() : undefined;
   const metaDescription = typeof body.metaDescription === 'string' ? body.metaDescription.trim() || undefined : undefined;
   const tags = Array.isArray(body.tags) ? (body.tags as string[]).filter((t) => typeof t === 'string') : undefined;
@@ -323,7 +325,7 @@ export async function deleteBlog(req: Request, res: Response): Promise<void> {
 // ---------- Admin: Case studies ----------
 
 const MAX_METRICS = 4;
-const MAX_GALLERY_IMAGES = 8;
+const MAX_GALLERY_IMAGES = 12;
 
 /** Trimmed string, or undefined when absent/blank. */
 function optionalText(v: unknown): string | undefined {
@@ -400,9 +402,11 @@ function validateCaseStudyBody(body: Record<string, unknown>): Omit<CaseStudy, '
     location: optionalText(body.location),
     year: optionalText(body.year),
 
-    challenge: optionalText(body.challenge),
-    solution: optionalText(body.solution),
-    results: optionalText(body.results),
+    // Rich text from the admin editor — sanitized here because the website
+    // renders it as HTML.
+    challenge: sanitizeStoryHtml(body.challenge),
+    solution: sanitizeStoryHtml(body.solution),
+    results: sanitizeStoryHtml(body.results),
 
     metrics: parseMetrics(body.metrics),
     gallery: parseGallery(body.gallery),
