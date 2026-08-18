@@ -3,9 +3,24 @@ import { ObjectId } from 'mongodb';
 import { getBlogCollection } from '../models/Blog.js';
 import { getCaseStudyCollection } from '../models/CaseStudy.js';
 import { getEventCollection } from '../models/Event.js';
-import type { Blog, CaseStudy, Event } from '../types/index.js';
+import type {
+  Blog,
+  CaseStudy,
+  CaseStudyGalleryImage,
+  CaseStudyMetric,
+  CaseStudyQuote,
+  Event,
+} from '../types/index.js';
 
 const SLUG_REGEX = /^[a-zA-Z0-9-]+$/;
+
+/** Case studies created before `isPublished` existed count as published. */
+const PUBLISHED_FILTER = {
+  $or: [{ isPublished: true }, { isPublished: { $exists: false } }],
+};
+
+/** Featured first, then explicit order, then newest. */
+const CASE_STUDY_SORT = { isFeatured: -1, order: 1, createdAt: -1 } as const;
 
 function validateSlug(s: unknown): string | null {
   if (typeof s !== 'string' || !s.trim()) return null;
@@ -19,7 +34,9 @@ export async function listResources(req: Request, res: Response): Promise<void> 
   try {
     const [blogs, caseStudies, events] = await Promise.all([
       getBlogCollection().find({}).sort({ publishedAt: -1, createdAt: -1 }).toArray(),
-      getCaseStudyCollection().find({}).sort({ order: 1, createdAt: -1 }).toArray(),
+      // Published only: this payload feeds the home and product carousels, so an
+      // unpublished draft would otherwise surface there.
+      getCaseStudyCollection().find(PUBLISHED_FILTER).sort(CASE_STUDY_SORT).toArray(),
       getEventCollection().find({}).sort({ eventDate: -1, createdAt: -1 }).toArray(),
     ]);
     const stripId = <T extends { _id?: unknown }>(arr: T[]) =>
@@ -58,13 +75,30 @@ export async function listBlogs(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** GET /api/resources/case-studies – public list */
+/** GET /api/resources/case-studies – public list; optional ?industry=x&limit=N&excludeSlug=xxx */
 export async function listCaseStudiesPublic(req: Request, res: Response): Promise<void> {
   try {
-    const items = await getCaseStudyCollection()
-      .find({})
-      .sort({ order: 1, createdAt: -1 })
-      .toArray();
+    const industry =
+      typeof req.query['industry'] === 'string' && req.query['industry'].trim()
+        ? req.query['industry'].trim()
+        : undefined;
+    const excludeSlug =
+      typeof req.query['excludeSlug'] === 'string' && req.query['excludeSlug'].trim()
+        ? req.query['excludeSlug'].trim()
+        : undefined;
+    const limit =
+      typeof req.query['limit'] === 'string'
+        ? Math.min(100, Math.max(1, parseInt(req.query['limit'], 10) || 20))
+        : undefined;
+
+    const filter: Record<string, unknown> = { ...PUBLISHED_FILTER };
+    if (industry) filter['industry'] = industry;
+    if (excludeSlug) filter['slug'] = { $ne: excludeSlug };
+
+    let cursor = getCaseStudyCollection().find(filter).sort(CASE_STUDY_SORT);
+    if (limit) cursor = cursor.limit(limit);
+    const items = await cursor.toArray();
+
     const stripId = (arr: CaseStudy[]) =>
       arr.map(({ _id, ...rest }) => ({ ...rest, _id: _id?.toString() }));
     res.json({ success: true, caseStudies: stripId(items) });
@@ -74,7 +108,7 @@ export async function listCaseStudiesPublic(req: Request, res: Response): Promis
   }
 }
 
-/** GET /api/resources/case-studies/slug/:slug – public by slug */
+/** GET /api/resources/case-studies/slug/:slug – public by slug; published only */
 export async function getCaseStudyBySlug(req: Request, res: Response): Promise<void> {
   try {
     const slug = validateSlug(req.params['slug']);
@@ -82,7 +116,7 @@ export async function getCaseStudyBySlug(req: Request, res: Response): Promise<v
       res.status(400).json({ error: 'Invalid slug' });
       return;
     }
-    const item = await getCaseStudyCollection().findOne({ slug });
+    const item = await getCaseStudyCollection().findOne({ slug, ...PUBLISHED_FILTER });
     if (!item) {
       res.status(404).json({ error: 'Case study not found' });
       return;
@@ -288,20 +322,102 @@ export async function deleteBlog(req: Request, res: Response): Promise<void> {
 
 // ---------- Admin: Case studies ----------
 
+const MAX_METRICS = 4;
+const MAX_GALLERY_IMAGES = 8;
+
+/** Trimmed string, or undefined when absent/blank. */
+function optionalText(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Drops entries missing the keys that make them worth rendering. */
+function parseMetrics(v: unknown): CaseStudyMetric[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const metrics = v
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+    .map((m) => ({ value: optionalText(m['value']), label: optionalText(m['label']) }))
+    .filter((m): m is CaseStudyMetric => !!m.value && !!m.label)
+    .slice(0, MAX_METRICS);
+  return metrics.length ? metrics : [];
+}
+
+function parseGallery(v: unknown): CaseStudyGalleryImage[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const gallery = v
+    .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
+    .map((g) => {
+      const url = optionalText(g['url']);
+      const caption = optionalText(g['caption']);
+      return url ? ({ url, ...(caption ? { caption } : {}) } as CaseStudyGalleryImage) : null;
+    })
+    .filter((g): g is CaseStudyGalleryImage => g !== null)
+    .slice(0, MAX_GALLERY_IMAGES);
+  return gallery.length ? gallery : [];
+}
+
+function parseQuote(v: unknown): CaseStudyQuote | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const q = v as Record<string, unknown>;
+  const text = optionalText(q['text']);
+  // A quote without its text has nothing to render.
+  if (!text) return undefined;
+  const author = optionalText(q['author']);
+  const role = optionalText(q['role']);
+  return { text, ...(author ? { author } : {}), ...(role ? { role } : {}) };
+}
+
+function parseProductsUsed(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v
+    .map((p) => optionalText(p))
+    .filter((p): p is string => !!p)
+    .slice(0, 20);
+}
+
+/**
+ * Only `slug` and `title` are required — staff must be able to save a partially
+ * written draft and finish it later.
+ */
 function validateCaseStudyBody(body: Record<string, unknown>): Omit<CaseStudy, '_id' | 'createdAt' | 'updatedAt'> | { error: string } {
   const slug = validateSlug(body.slug);
-  if (!slug) return { error: 'slug is required' };
+  if (!slug) return { error: 'slug is required and alphanumeric with hyphens' };
   const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : null;
   if (!title) return { error: 'title is required' };
+
   const description = typeof body.description === 'string' ? body.description.trim() : '';
   const image = typeof body.image === 'string' ? body.image.trim() : '';
   const order = typeof body.order === 'number' ? body.order : 0;
-  return { slug, title, description, image, order };
+
+  return {
+    slug,
+    title,
+    description,
+    image,
+    order,
+
+    client: optionalText(body.client),
+    industry: optionalText(body.industry),
+    location: optionalText(body.location),
+    year: optionalText(body.year),
+
+    challenge: optionalText(body.challenge),
+    solution: optionalText(body.solution),
+    results: optionalText(body.results),
+
+    metrics: parseMetrics(body.metrics),
+    gallery: parseGallery(body.gallery),
+    productsUsed: parseProductsUsed(body.productsUsed),
+    quote: parseQuote(body.quote),
+
+    isPublished: typeof body.isPublished === 'boolean' ? body.isPublished : true,
+    isFeatured: typeof body.isFeatured === 'boolean' ? body.isFeatured : false,
+    metaDescription: optionalText(body.metaDescription),
+  };
 }
 
 export async function listCaseStudiesAdmin(req: Request, res: Response): Promise<void> {
   try {
-    const items = await getCaseStudyCollection().find({}).sort({ order: 1 }).toArray();
+    const items = await getCaseStudyCollection().find({}).sort(CASE_STUDY_SORT).toArray();
     res.json({ items: items.map((c) => ({ ...c, _id: c._id?.toString() })) });
   } catch (err) {
     console.error('listCaseStudiesAdmin error:', err);
@@ -323,7 +439,11 @@ export async function createCaseStudy(req: Request, res: Response): Promise<void
       return;
     }
     const now = new Date();
-    const doc: CaseStudy = { ...parsed, createdAt: now, updatedAt: now };
+    // Strip undefined so optional fields are absent rather than stored as null.
+    const defined = Object.fromEntries(
+      Object.entries(parsed).filter(([, v]) => v !== undefined)
+    ) as Omit<CaseStudy, '_id' | 'createdAt' | 'updatedAt'>;
+    const doc: CaseStudy = { ...defined, createdAt: now, updatedAt: now };
     const result = await coll.insertOne(doc);
     const inserted = await coll.findOne({ _id: result.insertedId });
     res.status(201).json(inserted ? { ...inserted, _id: inserted._id?.toString() } : {});
@@ -351,10 +471,25 @@ export async function updateCaseStudy(req: Request, res: Response): Promise<void
       res.status(404).json({ error: 'Case study not found' });
       return;
     }
+    if (parsed.slug !== existing.slug) {
+      const taken = await coll.findOne({ slug: parsed.slug });
+      if (taken) {
+        res.status(400).json({ error: 'Case study with this slug already exists' });
+        return;
+      }
+    }
     const now = new Date();
+    // The admin form always submits the whole record, so a field that came back
+    // undefined was cleared by the user — unset it instead of storing null.
+    const $set: Record<string, unknown> = { updatedAt: now };
+    const $unset: Record<string, ''> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value === undefined) $unset[key] = '';
+      else $set[key] = value;
+    }
     await coll.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { ...parsed, updatedAt: now } }
+      Object.keys($unset).length ? { $set, $unset } : { $set }
     );
     const updated = await coll.findOne({ _id: new ObjectId(id) });
     res.json(updated ? { ...updated, _id: updated._id?.toString() } : {});

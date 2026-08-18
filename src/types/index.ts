@@ -52,7 +52,32 @@ export interface Blog {
   updatedAt?: Date;
 }
 
-/** Case study */
+/** A headline outcome shown as a large number on the case study page */
+export interface CaseStudyMetric {
+  value: string;
+  label: string;
+}
+
+/** Supporting project photo */
+export interface CaseStudyGalleryImage {
+  url: string;
+  caption?: string;
+}
+
+/** Client pull-quote */
+export interface CaseStudyQuote {
+  text: string;
+  author?: string;
+  role?: string;
+}
+
+/**
+ * Case study.
+ *
+ * `description` (teaser) and `image` (hero) keep their original names because
+ * the home and product carousels read them off `GET /api/resources`. Everything
+ * else is optional so documents created before the fields existed stay valid.
+ */
 export interface CaseStudy {
   _id?: ObjectId;
   slug: string;
@@ -60,6 +85,29 @@ export interface CaseStudy {
   description: string;
   image: string;
   order?: number;
+
+  /** Overview */
+  client?: string;
+  industry?: string;
+  location?: string;
+  year?: string;
+
+  /** Story */
+  challenge?: string;
+  solution?: string;
+  results?: string;
+
+  /** Proof */
+  metrics?: CaseStudyMetric[];
+  gallery?: CaseStudyGalleryImage[];
+  productsUsed?: string[];
+  quote?: CaseStudyQuote;
+
+  /** Status. An absent `isPublished` counts as published. */
+  isPublished?: boolean;
+  isFeatured?: boolean;
+  metaDescription?: string;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -285,6 +333,8 @@ export interface ContactSubmission {
   name: string;
   email: string;
   phone?: string;
+  /** Stored separately. Legacy rows embed it in `message` as "[Company: X]". */
+  company?: string;
   subject: string;
   message: string;
   createdAt: Date;

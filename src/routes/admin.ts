@@ -371,11 +371,33 @@ router.get(
   contactController.list
 );
 
+/** Delete a contact form submission. Requires content:write */
+router.delete(
+  '/contact-submissions/:id',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  contactController.remove
+);
+
 /** List newsletter subscriptions. Requires content:read */
 router.get(
   '/newsletter-subscriptions',
   requirePermission(PERMISSIONS.CONTENT_READ),
   newsletterController.list
+);
+
+/** Bulk-delete newsletter subscriptions. Requires content:write.
+ *  Declared before the :id route so "bulk-delete" is not read as an id. */
+router.post(
+  '/newsletter-subscriptions/bulk-delete',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  newsletterController.removeMany
+);
+
+/** Delete a newsletter subscription. Requires content:write */
+router.delete(
+  '/newsletter-subscriptions/:id',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  newsletterController.remove
 );
 
 /** List all content (paginated). Requires content:read */

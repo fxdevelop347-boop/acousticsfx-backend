@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { ObjectId } from 'mongodb';
 import { getNewsletterSubscriptionCollection } from '../models/NewsletterSubscription.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -52,5 +53,55 @@ export async function list(req: Request, res: Response): Promise<void> {
   } catch (err) {
     console.error('Newsletter list error:', err);
     res.status(500).json({ error: 'Failed to list subscriptions' });
+  }
+}
+
+/** DELETE /api/admin/newsletter-subscriptions/:id */
+export async function remove(req: Request, res: Response): Promise<void> {
+  try {
+    const id = typeof req.params['id'] === 'string' ? req.params['id'] : '';
+    if (!id || !ObjectId.isValid(id)) {
+      res.status(400).json({ error: 'Invalid id' });
+      return;
+    }
+    const result = await getNewsletterSubscriptionCollection().deleteOne({
+      _id: new ObjectId(id),
+    });
+    if (result.deletedCount === 0) {
+      res.status(404).json({ error: 'Subscription not found' });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error('Newsletter delete error:', err);
+    res.status(500).json({ error: 'Failed to delete subscription' });
+  }
+}
+
+/**
+ * POST /api/admin/newsletter-subscriptions/bulk-delete
+ * Body: { ids: string[] }. Used by the "Delete selected" action.
+ */
+export async function removeMany(req: Request, res: Response): Promise<void> {
+  try {
+    const raw = (req.body as { ids?: unknown })?.ids;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      res.status(400).json({ error: 'ids must be a non-empty array' });
+      return;
+    }
+    const ids = raw
+      .filter((id): id is string => typeof id === 'string' && ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+    if (ids.length === 0) {
+      res.status(400).json({ error: 'No valid ids provided' });
+      return;
+    }
+    const result = await getNewsletterSubscriptionCollection().deleteMany({
+      _id: { $in: ids },
+    });
+    res.json({ ok: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error('Newsletter bulk delete error:', err);
+    res.status(500).json({ error: 'Failed to delete subscriptions' });
   }
 }
