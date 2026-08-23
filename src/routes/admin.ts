@@ -393,6 +393,14 @@ router.post(
   newsletterController.removeMany
 );
 
+/** Send a newsletter to selected or all active subscribers. Requires content:write.
+ *  Declared before the :id route so "newsletter" paths are not read as an id. */
+router.post(
+  '/newsletter/send',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  newsletterController.sendCampaign
+);
+
 /** Delete a newsletter subscription. Requires content:write */
 router.delete(
   '/newsletter-subscriptions/:id',

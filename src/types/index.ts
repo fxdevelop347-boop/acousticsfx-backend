@@ -340,10 +340,35 @@ export interface ContactSubmission {
   createdAt: Date;
 }
 
+/**
+ * Subscriber lifecycle. Rows created before campaigns existed carry no `status`,
+ * so "active" is the absence of `unsubscribed`, never an equality check.
+ */
+export type NewsletterStatus = 'active' | 'unsubscribed' | 'bounced';
+
 /** Newsletter signup from the public site */
 export interface NewsletterSubscription {
   _id?: ObjectId;
   email: string;
+  createdAt: Date;
+  status?: NewsletterStatus;
+  unsubscribedAt?: Date;
+  /** Set after a campaign goes out, so a stalled send can be spotted. */
+  lastSentAt?: Date;
+}
+
+/** One newsletter send, kept as an audit trail of what went to whom and when. */
+export interface NewsletterCampaign {
+  _id?: ObjectId;
+  subject: string;
+  /** Sanitized body HTML as composed in the admin, before the email shell is applied. */
+  bodyHtml: string;
+  recipientCount: number;
+  sentCount: number;
+  failedCount: number;
+  /** Addresses the provider rejected, capped so one bad batch cannot bloat the document. */
+  failedRecipients?: string[];
+  sentBy: { id: string; email: string };
   createdAt: Date;
 }
 

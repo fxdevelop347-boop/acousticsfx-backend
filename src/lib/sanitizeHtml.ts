@@ -87,3 +87,28 @@ export function sanitizeStoryHtml(value: unknown): string | undefined {
 export function sanitizeArticleHtml(value: unknown): string | undefined {
   return clean(value, ARTICLE_OPTIONS);
 }
+
+/**
+ * Newsletter bodies are the article set minus what email clients punish. Data-URI
+ * images are dropped because inlining them inflates the message and reliably trips
+ * spam filters, and `class` is dropped because the shell inlines every style —
+ * Gmail strips `<style>` blocks, so a class with no rule behind it is dead weight.
+ */
+const NEWSLETTER_OPTIONS: sanitize.IOptions = {
+  ...ARTICLE_OPTIONS,
+  allowedAttributes: {
+    a: ['href', 'target', 'rel'],
+    img: ['src', 'alt', 'width', 'height'],
+    span: ['style'],
+    p: ['style'],
+  },
+  allowedSchemesByTag: { img: ['http', 'https'] },
+  // Dropping a disallowed scheme leaves the <img> behind with no src, which renders
+  // as a broken-image icon in the inbox. Remove the whole element instead.
+  exclusiveFilter: (frame) => frame.tag === 'img' && !frame.attribs['src'],
+};
+
+/** Sanitizes newsletter body HTML composed in the admin. Returns undefined when effectively empty. */
+export function sanitizeNewsletterHtml(value: unknown): string | undefined {
+  return clean(value, NEWSLETTER_OPTIONS);
+}

@@ -22,6 +22,25 @@ export const env = {
   SMTP_PASS: process.env.SMTP_PASS,
   /** From address for reset emails */
   SMTP_FROM: process.env.SMTP_FROM ?? 'AcousticsFX Admin <noreply@acousticsfx.com>',
+  /** Public website URL, used for links and images inside newsletter emails. */
+  PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL ?? 'https://acousticsfx.com',
+  /** Public URL of this API, used to build the unsubscribe link. Must be reachable from an inbox. */
+  PUBLIC_API_URL: process.env.PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? '8080'}`,
+  /** Resend API key. When set, newsletters go out through Resend's batch API. */
+  RESEND_API_KEY: process.env.RESEND_API_KEY,
+  /** From address for newsletters. Should be on an authenticated (SPF/DKIM) sending domain. */
+  NEWSLETTER_FROM: process.env.NEWSLETTER_FROM ?? 'AcousticsFX <newsletter@acousticsfx.com>',
+  /** Monitored mailbox for replies. A no-reply Reply-To hurts deliverability. */
+  NEWSLETTER_REPLY_TO: process.env.NEWSLETTER_REPLY_TO ?? 'info@acousticsfx.com',
+  /** Mailbox for mailto: unsubscribes, advertised in the List-Unsubscribe header. */
+  NEWSLETTER_UNSUBSCRIBE_MAILBOX:
+    process.env.NEWSLETTER_UNSUBSCRIBE_MAILBOX ?? 'unsubscribe@acousticsfx.com',
+  /** RFC 2919 List-Id, so mail clients can group and filter the list. */
+  NEWSLETTER_LIST_ID: process.env.NEWSLETTER_LIST_ID ?? 'AcousticsFX Newsletter <newsletter.acousticsfx.com>',
+  /** Physical postal address shown in the footer. Required by CAN-SPAM, and its absence is a spam signal. */
+  NEWSLETTER_POSTAL_ADDRESS: process.env.NEWSLETTER_POSTAL_ADDRESS ?? '',
+  /** Secret for signing unsubscribe links. Falls back to JWT_SECRET so links never silently break. */
+  UNSUBSCRIBE_SECRET: process.env.UNSUBSCRIBE_SECRET ?? requireEnv('JWT_SECRET'),
   /** ImageKit (optional). If set, admin image uploads go to ImageKit. Supports IMAGEKIT_* or imagekit_* env vars. */
   IMAGEKIT_PRIVATE_KEY:
     process.env.IMAGEKIT_PRIVATE_KEY ?? process.env.imagekit_private_key,

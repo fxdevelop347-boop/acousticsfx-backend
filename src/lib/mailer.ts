@@ -36,3 +36,103 @@ export async function sendPasswordResetEmail(to: string, resetLink: string): Pro
     html,
   });
 }
+
+/** One fully-rendered message bound for a single recipient. Never a BCC list. */
+export interface OutgoingMessage {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  headers: Record<string, string>;
+}
+
+export interface BatchResult {
+  sent: number;
+  failed: string[];
+}
+
+const RESEND_BATCH_ENDPOINT = 'https://api.resend.com/emails/batch';
+/** Resend accepts at most 100 messages per batch call. */
+export const NEWSLETTER_BATCH_SIZE = 100;
+
+async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promise<BatchResult> {
+  const payload = messages.map((m) => ({
+    from: env.NEWSLETTER_FROM,
+    to: [m.to],
+    reply_to: env.NEWSLETTER_REPLY_TO,
+    subject: m.subject,
+    html: m.html,
+    text: m.text,
+    headers: m.headers,
+  }));
+
+  const res = await fetch(RESEND_BATCH_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    // Resend rejects or accepts a batch as a whole, so a non-2xx fails every address in it.
+    const detail = await res.text().catch(() => '');
+    console.error(`[mailer] Resend batch failed (${res.status}):`, detail.slice(0, 500));
+    return { sent: 0, failed: messages.map((m) => m.to) };
+  }
+
+  return { sent: messages.length, failed: [] };
+}
+
+async function sendViaSmtp(
+  messages: OutgoingMessage[],
+  trans: nodemailer.Transporter
+): Promise<BatchResult> {
+  const failed: string[] = [];
+  let sent = 0;
+  // Sequential rather than parallel: SMTP relays rate-limit per connection, and a
+  // burst of concurrent sends is exactly the pattern that gets a sender throttled.
+  for (const m of messages) {
+    try {
+      await trans.sendMail({
+        from: env.NEWSLETTER_FROM,
+        replyTo: env.NEWSLETTER_REPLY_TO,
+        to: m.to,
+        subject: m.subject,
+        html: m.html,
+        text: m.text,
+        headers: m.headers,
+      });
+      sent += 1;
+    } catch (err) {
+      console.error(`[mailer] SMTP send to ${m.to} failed:`, err);
+      failed.push(m.to);
+    }
+  }
+  return { sent, failed };
+}
+
+/**
+ * Sends one batch of newsletter messages, preferring Resend and falling back to the
+ * SMTP transport already configured for password resets. With neither configured the
+ * batch is logged and reported as sent, matching how the reset flow behaves in dev.
+ */
+export async function sendNewsletterBatch(messages: OutgoingMessage[]): Promise<BatchResult> {
+  if (messages.length === 0) return { sent: 0, failed: [] };
+
+  if (env.RESEND_API_KEY) {
+    return sendViaResend(messages, env.RESEND_API_KEY);
+  }
+
+  const trans = getTransporter();
+  if (trans) {
+    return sendViaSmtp(messages, trans);
+  }
+
+  console.log(
+    `[mailer] No RESEND_API_KEY or SMTP configured. Would have sent "${messages[0]?.subject}" to ${messages.length} recipient(s):`,
+    messages.map((m) => m.to).join(', ')
+  );
+  return { sent: messages.length, failed: [] };
+}
