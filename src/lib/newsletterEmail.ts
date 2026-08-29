@@ -23,6 +23,16 @@ export interface NewsletterMessageParts {
   headers: Record<string, string>;
 }
 
+/**
+ * The wordmark in the header comes from the display name on NEWSLETTER_FROM rather
+ * than a second hardcoded copy, so the name in the inbox sender line and the name at
+ * the top of the email cannot drift apart when one of them is changed.
+ */
+function brandName(): string {
+  const match = env.NEWSLETTER_FROM.match(/^\s*"?([^"<]+?)"?\s*</);
+  return match?.[1]?.trim() || 'AcousticsFX';
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -86,7 +96,7 @@ function wrapHtml(subject: string, bodyHtml: string, unsubscribeUrl: string): st
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid ${BORDER};border-radius:8px;">
   <tr>
     <td style="padding:24px 32px;border-bottom:1px solid ${BORDER};">
-      <a href="${site}" style="color:${BRAND};font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:bold;text-decoration:none;">AcousticsFX</a>
+      <a href="${site}" style="color:${BRAND};font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:bold;text-decoration:none;">${escapeHtml(brandName())}</a>
     </td>
   </tr>
   <tr>
@@ -131,7 +141,6 @@ export function newsletterHeaders(unsubscribeUrl: string): Record<string, string
     'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:${env.NEWSLETTER_UNSUBSCRIBE_MAILBOX}>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     'List-Id': env.NEWSLETTER_LIST_ID,
-    Precedence: 'bulk',
   };
 }
 
