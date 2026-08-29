@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
+# Backups and per-environment copies also carry live secrets.
+.env.*
+!.env.example
 *.log
 .DS_Store

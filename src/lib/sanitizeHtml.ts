@@ -108,7 +108,20 @@ const NEWSLETTER_OPTIONS: sanitize.IOptions = {
   exclusiveFilter: (frame) => frame.tag === 'img' && !frame.attribs['src'],
 };
 
+/**
+ * Rich-text editors — and anything pasted out of Word or Google Docs — write the gap
+ * between words as `&nbsp;` rather than a space. A non-breaking space gives the mail
+ * client no wrap opportunity, so a paragraph becomes one unbreakable "word" hundreds
+ * of characters long, which cannot fit the 600px email table and overflows it on
+ * every client. Runs collapse to a single ordinary space, which is what the author
+ * meant in the first place.
+ */
+function collapseNonBreakingSpaces(html: string): string {
+  return html.replace(/(&nbsp;|&#160;|\u00a0)+/gi, ' ');
+}
+
 /** Sanitizes newsletter body HTML composed in the admin. Returns undefined when effectively empty. */
 export function sanitizeNewsletterHtml(value: unknown): string | undefined {
-  return clean(value, NEWSLETTER_OPTIONS);
+  if (typeof value !== 'string') return undefined;
+  return clean(collapseNonBreakingSpaces(value), NEWSLETTER_OPTIONS);
 }
