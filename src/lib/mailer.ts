@@ -49,11 +49,17 @@ export interface OutgoingMessage {
 export interface BatchResult {
   sent: number;
   failed: string[];
+  /** The provider's reason for the first failure, so it can be shown to whoever pressed send. */
+  error?: string;
 }
 
 const RESEND_BATCH_ENDPOINT = 'https://api.resend.com/emails/batch';
 /** Resend accepts at most 100 messages per batch call. */
 export const NEWSLETTER_BATCH_SIZE = 100;
+/** Resend allows two requests per second. */
+const RESEND_REQUEST_GAP_MS = 600;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promise<BatchResult> {
   const payload = messages.map((m) => ({
@@ -75,14 +81,41 @@ async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promi
     body: JSON.stringify(payload),
   });
 
-  if (!res.ok) {
-    // Resend rejects or accepts a batch as a whole, so a non-2xx fails every address in it.
-    const detail = await res.text().catch(() => '');
-    console.error(`[mailer] Resend batch failed (${res.status}):`, detail.slice(0, 500));
-    return { sent: 0, failed: messages.map((m) => m.to) };
+  if (res.ok) return { sent: messages.length, failed: [] };
+
+  const detail = await res.text().catch(() => '');
+
+  // One malformed address makes Resend reject the entire batch with a 422, so split
+  // until it is isolated and the valid addresses still go out. Resend's own permissive
+  // batch mode is not an option: it also accepts mail from an unverified sender, which
+  // then sits queued forever while reporting success.
+  if (res.status === 422 && messages.length > 1) {
+    const middle = Math.ceil(messages.length / 2);
+    const first = await sendViaResend(messages.slice(0, middle), apiKey);
+    await sleep(RESEND_REQUEST_GAP_MS);
+    const second = await sendViaResend(messages.slice(middle), apiKey);
+    return {
+      sent: first.sent + second.sent,
+      failed: [...first.failed, ...second.failed],
+      error: first.error ?? second.error,
+    };
   }
 
-  return { sent: messages.length, failed: [] };
+  // Anything else is about the whole send (bad key, unverified sender, quota).
+  console.error(`[mailer] Resend batch failed (${res.status}):`, detail.slice(0, 500));
+  return {
+    sent: 0,
+    failed: messages.map((m) => m.to),
+    error: resendErrorMessage(detail) ?? `Resend returned status ${res.status}`,
+  };
+}
+
+function resendErrorMessage(detail: string): string | undefined {
+  try {
+    return (JSON.parse(detail) as { message?: string }).message;
+  } catch {
+    return undefined;
+  }
 }
 
 async function sendViaSmtp(
@@ -91,6 +124,7 @@ async function sendViaSmtp(
 ): Promise<BatchResult> {
   const failed: string[] = [];
   let sent = 0;
+  let error: string | undefined;
   // Sequential rather than parallel: SMTP relays rate-limit per connection, and a
   // burst of concurrent sends is exactly the pattern that gets a sender throttled.
   for (const m of messages) {
@@ -108,9 +142,10 @@ async function sendViaSmtp(
     } catch (err) {
       console.error(`[mailer] SMTP send to ${m.to} failed:`, err);
       failed.push(m.to);
+      error ??= err instanceof Error ? err.message : 'SMTP send failed';
     }
   }
-  return { sent, failed };
+  return { sent, failed, error };
 }
 
 /**

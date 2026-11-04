@@ -269,6 +269,7 @@ export async function sendCampaign(req: Request, res: Response): Promise<void> {
         total: 1,
         sent: result.sent,
         failed: result.failed.length,
+        error: result.error,
       });
       return;
     }
@@ -321,16 +322,19 @@ export async function sendCampaign(req: Request, res: Response): Promise<void> {
 
     let sent = 0;
     const failedRecipients: string[] = [];
+    let sendError: string | undefined;
     for (let i = 0; i < messages.length; i += NEWSLETTER_BATCH_SIZE) {
       const batch = messages.slice(i, i + NEWSLETTER_BATCH_SIZE);
       const result = await sendNewsletterBatch(batch);
       sent += result.sent;
       failedRecipients.push(...result.failed);
+      sendError ??= result.error;
       if (i + NEWSLETTER_BATCH_SIZE < messages.length) await sleep(BATCH_PAUSE_MS);
     }
 
+    const failedSet = new Set(failedRecipients);
     await coll.updateMany(
-      { _id: { $in: unique.map((r) => r._id) } },
+      { _id: { $in: unique.filter((r) => !failedSet.has(r.email)).map((r) => r._id) } },
       { $set: { lastSentAt: new Date() } }
     );
 
@@ -352,6 +356,8 @@ export async function sendCampaign(req: Request, res: Response): Promise<void> {
       total: unique.length,
       sent,
       failed: failedRecipients.length,
+      failedRecipients: failedRecipients.slice(0, 100),
+      error: sendError,
       campaignId: String(campaign.insertedId),
     });
   } catch (err) {

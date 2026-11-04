@@ -29,7 +29,7 @@ export const env = {
   /** Resend API key. When set, newsletters go out through Resend's batch API. */
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   /** From address for newsletters. Should be on an authenticated (SPF/DKIM) sending domain. */
-  NEWSLETTER_FROM: process.env.NEWSLETTER_FROM ?? 'AcousticsFX <newsletter@acousticsfx.com>',
+  NEWSLETTER_FROM: process.env.NEWSLETTER_FROM ?? 'FX Acoustic Inc. <newsletter@send.acousticsfx.com>',
   /** Monitored mailbox for replies. A no-reply Reply-To hurts deliverability. */
   NEWSLETTER_REPLY_TO: process.env.NEWSLETTER_REPLY_TO ?? 'info@acousticsfx.com',
   /** Mailbox for mailto: unsubscribes, advertised in the List-Unsubscribe header. */
