@@ -46,9 +46,15 @@ export interface OutgoingMessage {
   headers: Record<string, string>;
 }
 
+/** An address the provider would not take, and why, in words an admin can act on. */
+export interface FailedRecipient {
+  email: string;
+  reason: string;
+}
+
 export interface BatchResult {
   sent: number;
-  failed: string[];
+  failed: FailedRecipient[];
   /** The provider's reason for the first failure, so it can be shown to whoever pressed send. */
   error?: string;
 }
@@ -58,8 +64,26 @@ const RESEND_BATCH_ENDPOINT = 'https://api.resend.com/emails/batch';
 export const NEWSLETTER_BATCH_SIZE = 100;
 /** Resend allows two requests per second. */
 const RESEND_REQUEST_GAP_MS = 600;
+const RESEND_RATE_LIMIT_RETRIES = 3;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** POSTs one batch, waiting out rate limits so throttled addresses are not reported as failed. */
+async function postResendBatch(body: string, apiKey: string): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(RESEND_BATCH_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+    });
+    if (res.status !== 429 || attempt >= RESEND_RATE_LIMIT_RETRIES) return res;
+    const waitSeconds = Math.min(Number(res.headers.get('retry-after')) || 1, 10);
+    await sleep(waitSeconds * 1000);
+  }
+}
 
 async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promise<BatchResult> {
   const payload = messages.map((m) => ({
@@ -72,14 +96,13 @@ async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promi
     headers: m.headers,
   }));
 
-  const res = await fetch(RESEND_BATCH_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  let res: Response;
+  try {
+    res = await postResendBatch(JSON.stringify(payload), apiKey);
+  } catch (err) {
+    console.error('[mailer] Could not reach Resend:', err);
+    return failAll(messages, 'Could not reach the mail provider');
+  }
 
   if (res.ok) return { sent: messages.length, failed: [] };
 
@@ -91,6 +114,7 @@ async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promi
   // then sits queued forever while reporting success.
   if (res.status === 422 && messages.length > 1) {
     const middle = Math.ceil(messages.length / 2);
+    await sleep(RESEND_REQUEST_GAP_MS);
     const first = await sendViaResend(messages.slice(0, middle), apiKey);
     await sleep(RESEND_REQUEST_GAP_MS);
     const second = await sendViaResend(messages.slice(middle), apiKey);
@@ -103,26 +127,33 @@ async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promi
 
   // Anything else is about the whole send (bad key, unverified sender, quota).
   console.error(`[mailer] Resend batch failed (${res.status}):`, detail.slice(0, 500));
+  return failAll(messages, resendFailureReason(res.status, detail));
+}
+
+function failAll(messages: OutgoingMessage[], reason: string): BatchResult {
   return {
     sent: 0,
-    failed: messages.map((m) => m.to),
-    error: resendErrorMessage(detail) ?? `Resend returned status ${res.status}`,
+    failed: messages.map((m) => ({ email: m.to, reason })),
+    error: reason,
   };
 }
 
-function resendErrorMessage(detail: string): string | undefined {
+function resendFailureReason(status: number, detail: string): string {
+  let message: string | undefined;
   try {
-    return (JSON.parse(detail) as { message?: string }).message;
+    message = (JSON.parse(detail) as { message?: string }).message;
   } catch {
-    return undefined;
+    // Not JSON, so there is no provider message to pass on.
   }
+  if (status === 422 && message?.includes('`to`')) return 'Invalid email address format';
+  return message ?? `Resend returned status ${status}`;
 }
 
 async function sendViaSmtp(
   messages: OutgoingMessage[],
   trans: nodemailer.Transporter
 ): Promise<BatchResult> {
-  const failed: string[] = [];
+  const failed: FailedRecipient[] = [];
   let sent = 0;
   let error: string | undefined;
   // Sequential rather than parallel: SMTP relays rate-limit per connection, and a
@@ -141,8 +172,9 @@ async function sendViaSmtp(
       sent += 1;
     } catch (err) {
       console.error(`[mailer] SMTP send to ${m.to} failed:`, err);
-      failed.push(m.to);
-      error ??= err instanceof Error ? err.message : 'SMTP send failed';
+      const reason = err instanceof Error ? err.message : 'SMTP send failed';
+      failed.push({ email: m.to, reason });
+      error ??= reason;
     }
   }
   return { sent, failed, error };

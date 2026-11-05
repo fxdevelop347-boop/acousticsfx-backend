@@ -357,6 +357,14 @@ export interface NewsletterSubscription {
   lastSentAt?: Date;
 }
 
+/** A subscriber one newsletter send did not reach. */
+export interface NewsletterCampaignFailure {
+  email: string;
+  /** Null on campaigns sent before reasons were recorded. */
+  reason: string | null;
+  subscriptionId?: string;
+}
+
 /** One newsletter send, kept as an audit trail of what went to whom and when. */
 export interface NewsletterCampaign {
   _id?: ObjectId;
@@ -366,10 +374,15 @@ export interface NewsletterCampaign {
   recipientCount: number;
   sentCount: number;
   failedCount: number;
-  /** Addresses the provider rejected, capped so one bad batch cannot bloat the document. */
+  /** Who the send still has not reached. Capped so one bad send cannot bloat the document. */
+  failures?: NewsletterCampaignFailure[];
+  /** Older campaigns recorded bare addresses instead of `failures`. */
   failedRecipients?: string[];
   sentBy: { id: string; email: string };
   createdAt: Date;
+  lastResendAt?: Date;
+  /** Held while a resend runs, so a double click cannot email the same people twice. */
+  resendStartedAt?: Date;
 }
 
 /** Site content entry: key-value with optional type and audit fields */
