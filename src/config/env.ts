@@ -28,6 +28,8 @@ export const env = {
   PUBLIC_API_URL: process.env.PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? '8080'}`,
   /** Resend API key. When set, newsletters go out through Resend's batch API. */
   RESEND_API_KEY: process.env.RESEND_API_KEY,
+  /** Signing secret of the Resend webhook. Without it, bounce reports are refused. */
+  RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
   /** From address for newsletters. Should be on an authenticated (SPF/DKIM) sending domain. */
   NEWSLETTER_FROM: process.env.NEWSLETTER_FROM ?? 'FX Acoustic Inc. <newsletter@send.acousticsfx.com>',
   /** Monitored mailbox for replies. A no-reply Reply-To hurts deliverability. */

@@ -16,10 +16,13 @@ import trustedPartnerRoutes from './routes/trustedPartners.js';
 import footerLinkRoutes from './routes/footerLinks.js';
 import locationRoutes from './routes/locations.js';
 import faqRoutes from './routes/faqs.js';
+import webhookRoutes from './routes/webhooks.js';
 
 const app = express();
 
 app.use(cors({ origin: true, credentials: true }));
+// Before the JSON parser, because webhook signatures are checked against the raw body.
+app.use('/api/webhooks', webhookRoutes);
 // JSON body limit (upload uses multipart and is limited in middleware/upload.ts to 20MB)
 app.use(express.json({ limit: '20mb' }));
 

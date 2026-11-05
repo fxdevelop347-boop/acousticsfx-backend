@@ -353,6 +353,9 @@ export interface NewsletterSubscription {
   createdAt: Date;
   status?: NewsletterStatus;
   unsubscribedAt?: Date;
+  /** When the mail provider reported a permanent bounce. */
+  bouncedAt?: Date;
+  bounceReason?: string;
   /** Set after a campaign goes out, so a stalled send can be spotted. */
   lastSentAt?: Date;
 }
@@ -363,6 +366,26 @@ export interface NewsletterCampaignFailure {
   /** Null on campaigns sent before reasons were recorded. */
   reason: string | null;
   subscriptionId?: string;
+}
+
+/**
+ * A problem the mail provider reported after accepting a message. Kept apart from the
+ * campaign because the report can arrive before the campaign record has been saved.
+ */
+export interface NewsletterBounce {
+  /** `<provider email id>:<kind>`, so a redelivered webhook cannot record it twice. */
+  _id: string;
+  kind: 'bounced' | 'complained';
+  email: string;
+  /** Absent for a test send, or for mail sent before campaigns were tagged. */
+  campaignId?: string;
+  subscriptionId?: string;
+  /** False for a temporary bounce, which does not stop future sends. */
+  permanent: boolean;
+  reason: string;
+  occurredAt: Date;
+  /** Set once the campaign has gone out again to this subscriber's corrected address. */
+  resentAt?: Date;
 }
 
 /** One newsletter send, kept as an audit trail of what went to whom and when. */

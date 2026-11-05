@@ -44,6 +44,8 @@ export interface OutgoingMessage {
   html: string;
   text: string;
   headers: Record<string, string>;
+  /** Echoed back on bounce reports, to tie them to a campaign and subscriber. */
+  tags?: Record<string, string>;
 }
 
 /** An address the provider would not take, and why, in words an admin can act on. */
@@ -94,6 +96,9 @@ async function sendViaResend(messages: OutgoingMessage[], apiKey: string): Promi
     html: m.html,
     text: m.text,
     headers: m.headers,
+    ...(m.tags
+      ? { tags: Object.entries(m.tags).map(([name, value]) => ({ name, value })) }
+      : {}),
   }));
 
   let res: Response;
