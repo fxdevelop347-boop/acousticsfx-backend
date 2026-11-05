@@ -401,6 +401,34 @@ router.post(
   newsletterController.sendCampaign
 );
 
+/** Send history. Requires content:read */
+router.get(
+  '/newsletter/campaigns',
+  requirePermission(PERMISSIONS.CONTENT_READ),
+  newsletterController.listCampaigns
+);
+
+/** One send, with who it did not reach and why. Requires content:read */
+router.get(
+  '/newsletter/campaigns/:id',
+  requirePermission(PERMISSIONS.CONTENT_READ),
+  newsletterController.getCampaign
+);
+
+/** Send a past campaign again, only to the subscribers it did not reach. Requires content:write */
+router.post(
+  '/newsletter/campaigns/:id/resend-failed',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  newsletterController.resendFailed
+);
+
+/** Correct a subscriber's address. Requires content:write */
+router.patch(
+  '/newsletter-subscriptions/:id',
+  requirePermission(PERMISSIONS.CONTENT_WRITE),
+  newsletterController.updateEmail
+);
+
 /** Delete a newsletter subscription. Requires content:write */
 router.delete(
   '/newsletter-subscriptions/:id',

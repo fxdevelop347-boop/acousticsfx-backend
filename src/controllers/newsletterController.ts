@@ -7,6 +7,7 @@ import { buildNewsletterMessage } from '../lib/newsletterEmail.js';
 import { buildUnsubscribeUrl, verifyUnsubscribeToken } from '../lib/unsubscribeToken.js';
 import { sendNewsletterBatch, NEWSLETTER_BATCH_SIZE, type OutgoingMessage } from '../lib/mailer.js';
 import { env } from '../config/env.js';
+import type { NewsletterCampaign, NewsletterCampaignFailure } from '../types/index.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -16,6 +17,12 @@ const MAX_RECIPIENTS = 5000;
 const BATCH_PAUSE_MS = 500;
 /** Only unsubscribed addresses are excluded; rows predating the status field have none. */
 const ACTIVE_FILTER = { status: { $ne: 'unsubscribed' } } as const;
+/** Failures kept per campaign, so a provider outage cannot write a multi-megabyte document. */
+const MAX_STORED_FAILURES = 1000;
+/** How long a resend blocks another one. Long enough to finish, short enough to recover from a crash. */
+const RESEND_LOCK_MS = 10 * 60 * 1000;
+
+type Recipient = { _id: ObjectId; email: string };
 
 /** POST /api/newsletter – public; store newsletter email */
 export async function submit(req: Request, res: Response): Promise<void> {
@@ -315,53 +322,272 @@ export async function sendCampaign(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const messages: OutgoingMessage[] = unique.map((r) => {
-      const parts = buildNewsletterMessage(subject, bodyHtml, buildUnsubscribeUrl(String(r._id)));
-      return { to: r.email, subject, ...parts };
-    });
-
-    let sent = 0;
-    const failedRecipients: string[] = [];
-    let sendError: string | undefined;
-    for (let i = 0; i < messages.length; i += NEWSLETTER_BATCH_SIZE) {
-      const batch = messages.slice(i, i + NEWSLETTER_BATCH_SIZE);
-      const result = await sendNewsletterBatch(batch);
-      sent += result.sent;
-      failedRecipients.push(...result.failed);
-      sendError ??= result.error;
-      if (i + NEWSLETTER_BATCH_SIZE < messages.length) await sleep(BATCH_PAUSE_MS);
-    }
-
-    const failedSet = new Set(failedRecipients);
-    await coll.updateMany(
-      { _id: { $in: unique.filter((r) => !failedSet.has(r.email)).map((r) => r._id) } },
-      { $set: { lastSentAt: new Date() } }
-    );
+    const { sent, failures, error } = await deliverCampaign(subject, bodyHtml, unique);
+    const storedFailures = failures.slice(0, MAX_STORED_FAILURES);
 
     const campaign = await getNewsletterCampaignCollection().insertOne({
       subject,
       bodyHtml,
       recipientCount: unique.length,
       sentCount: sent,
-      failedCount: failedRecipients.length,
-      // Capped so a provider outage cannot write a multi-megabyte document.
-      failedRecipients: failedRecipients.slice(0, 100),
+      failedCount: failures.length,
+      failures: storedFailures,
       sentBy: { id: req.admin?.id ?? '', email: req.admin?.email ?? '' },
       createdAt: new Date(),
     });
 
     res.json({
-      ok: failedRecipients.length === 0,
+      ok: failures.length === 0,
       test: false,
       total: unique.length,
       sent,
-      failed: failedRecipients.length,
-      failedRecipients: failedRecipients.slice(0, 100),
-      error: sendError,
+      failed: failures.length,
+      failures: storedFailures,
+      // Admin tabs opened before `failures` existed still read this.
+      failedRecipients: storedFailures.map((f) => f.email),
+      error,
       campaignId: String(campaign.insertedId),
     });
   } catch (err) {
     console.error('Newsletter send error:', err);
     res.status(500).json({ error: 'Failed to send newsletter' });
+  }
+}
+
+/** Sends one campaign to each recipient, and records who it reached. */
+async function deliverCampaign(subject: string, bodyHtml: string, recipients: Recipient[]) {
+  const messages: OutgoingMessage[] = recipients.map((r) => {
+    const parts = buildNewsletterMessage(subject, bodyHtml, buildUnsubscribeUrl(String(r._id)));
+    return { to: r.email, subject, ...parts };
+  });
+
+  let sent = 0;
+  let error: string | undefined;
+  const reasons = new Map<string, string>();
+  for (let i = 0; i < messages.length; i += NEWSLETTER_BATCH_SIZE) {
+    const result = await sendNewsletterBatch(messages.slice(i, i + NEWSLETTER_BATCH_SIZE));
+    sent += result.sent;
+    result.failed.forEach((f) => reasons.set(f.email, f.reason));
+    error ??= result.error;
+    if (i + NEWSLETTER_BATCH_SIZE < messages.length) await sleep(BATCH_PAUSE_MS);
+  }
+
+  await getNewsletterSubscriptionCollection().updateMany(
+    { _id: { $in: recipients.filter((r) => !reasons.has(r.email)).map((r) => r._id) } },
+    { $set: { lastSentAt: new Date() } }
+  );
+
+  const failures: NewsletterCampaignFailure[] = recipients
+    .filter((r) => reasons.has(r.email))
+    .map((r) => ({
+      email: r.email,
+      reason: reasons.get(r.email) ?? null,
+      subscriptionId: String(r._id),
+    }));
+  return { sent, failures, error };
+}
+
+function storedFailures(campaign: NewsletterCampaign): NewsletterCampaignFailure[] {
+  return (
+    campaign.failures ??
+    (campaign.failedRecipients ?? []).map((email) => ({ email, reason: null }))
+  );
+}
+
+/** Adds where each failed subscriber stands now, since they may have been corrected or removed. */
+async function withCurrentSubscriber(failures: NewsletterCampaignFailure[]) {
+  const ids = failures.flatMap((f) => (f.subscriptionId ? [new ObjectId(f.subscriptionId)] : []));
+  const emails = failures.filter((f) => !f.subscriptionId).map((f) => f.email);
+  const subscribers = await getNewsletterSubscriptionCollection()
+    .find({ $or: [{ _id: { $in: ids } }, { email: { $in: emails } }] })
+    .project<{ _id: ObjectId; email: string; status?: string }>({ _id: 1, email: 1, status: 1 })
+    .toArray();
+  const byId = new Map(subscribers.map((s) => [String(s._id), s]));
+  const byEmail = new Map(subscribers.map((s) => [s.email, s]));
+
+  return failures.map((f) => {
+    const subscriber = f.subscriptionId ? byId.get(f.subscriptionId) : byEmail.get(f.email);
+    return {
+      email: f.email,
+      reason: f.reason,
+      subscriptionId: subscriber ? String(subscriber._id) : null,
+      currentEmail: subscriber?.email ?? null,
+      status: subscriber ? (subscriber.status ?? 'active') : 'removed',
+    };
+  });
+}
+
+function campaignSummary(campaign: NewsletterCampaign) {
+  return {
+    _id: String(campaign._id),
+    subject: campaign.subject,
+    recipientCount: campaign.recipientCount,
+    sentCount: campaign.sentCount,
+    failedCount: campaign.failedCount,
+    sentByEmail: campaign.sentBy?.email ?? '',
+    createdAt: campaign.createdAt,
+    lastResendAt: campaign.lastResendAt ?? null,
+  };
+}
+
+/** GET /api/admin/newsletter/campaigns – send history, newest first. Requires CONTENT_READ. */
+export async function listCampaigns(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 100);
+    const skip = Math.max(Number(req.query.skip) || 0, 0);
+    const coll = getNewsletterCampaignCollection();
+    const [items, total] = await Promise.all([
+      coll
+        .find({})
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .project<NewsletterCampaign>({ bodyHtml: 0, failures: 0, failedRecipients: 0 })
+        .toArray(),
+      coll.countDocuments(),
+    ]);
+    res.json({ items: items.map(campaignSummary), total, limit, skip });
+  } catch (err) {
+    console.error('Newsletter campaign list error:', err);
+    res.status(500).json({ error: 'Failed to load send history' });
+  }
+}
+
+/** GET /api/admin/newsletter/campaigns/:id – one send and who it missed. Requires CONTENT_READ. */
+export async function getCampaign(req: Request, res: Response): Promise<void> {
+  try {
+    const id = typeof req.params['id'] === 'string' ? req.params['id'] : '';
+    if (!ObjectId.isValid(id)) {
+      res.status(400).json({ error: 'Invalid id' });
+      return;
+    }
+    const campaign = await getNewsletterCampaignCollection().findOne({ _id: new ObjectId(id) });
+    if (!campaign) {
+      res.status(404).json({ error: 'Send not found' });
+      return;
+    }
+    res.json({
+      ...campaignSummary(campaign),
+      failures: await withCurrentSubscriber(storedFailures(campaign)),
+    });
+  } catch (err) {
+    console.error('Newsletter campaign read error:', err);
+    res.status(500).json({ error: 'Failed to load this send' });
+  }
+}
+
+/**
+ * POST /api/admin/newsletter/campaigns/:id/resend-failed – requires CONTENT_WRITE.
+ *
+ * Only ever addresses subscribers this campaign failed to reach, at their current
+ * address, so anyone it already reached cannot get a second copy.
+ */
+export async function resendFailed(req: Request, res: Response): Promise<void> {
+  const id = typeof req.params['id'] === 'string' ? req.params['id'] : '';
+  if (!ObjectId.isValid(id)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return;
+  }
+  const _id = new ObjectId(id);
+  const campaigns = getNewsletterCampaignCollection();
+
+  try {
+    const campaign = await campaigns.findOneAndUpdate(
+      {
+        _id,
+        $or: [
+          { resendStartedAt: { $exists: false } },
+          { resendStartedAt: { $lt: new Date(Date.now() - RESEND_LOCK_MS) } },
+        ],
+      },
+      { $set: { resendStartedAt: new Date() } }
+    );
+    if (!campaign) {
+      const exists = await campaigns.countDocuments({ _id }, { limit: 1 });
+      res
+        .status(exists ? 409 : 404)
+        .json({ error: exists ? 'A resend for this newsletter is already running' : 'Send not found' });
+      return;
+    }
+
+    const failures = storedFailures(campaign);
+    const current = await withCurrentSubscriber(failures);
+    const isSendable = (f: (typeof current)[number]): boolean =>
+      f.status !== 'removed' && f.status !== 'unsubscribed';
+    const recipients: Recipient[] = current.filter(isSendable).map((f) => ({
+      _id: new ObjectId(f.subscriptionId as string),
+      email: f.currentEmail as string,
+    }));
+
+    if (recipients.length === 0) {
+      await campaigns.updateOne({ _id }, { $unset: { resendStartedAt: '' } });
+      res.status(400).json({ error: 'None of the failed subscribers can be emailed any more' });
+      return;
+    }
+
+    const { sent, failures: stillFailing, error } = await deliverCampaign(
+      campaign.subject,
+      campaign.bodyHtml,
+      recipients
+    );
+    const remaining = [
+      ...failures.filter((_, i) => !isSendable(current[i] as (typeof current)[number])),
+      ...stillFailing,
+    ];
+    const notStored = Math.max(campaign.failedCount - failures.length, 0);
+    const failedCount = remaining.length + notStored;
+
+    await campaigns.updateOne(
+      { _id },
+      {
+        $set: { failures: remaining, failedCount, lastResendAt: new Date() },
+        $inc: { sentCount: sent },
+        $unset: { resendStartedAt: '', failedRecipients: '' },
+      }
+    );
+
+    res.json({
+      ok: stillFailing.length === 0,
+      total: recipients.length,
+      sent,
+      failed: stillFailing.length,
+      error,
+      failures: await withCurrentSubscriber(remaining),
+    });
+  } catch (err) {
+    console.error('Newsletter resend error:', err);
+    res.status(500).json({ error: 'Failed to resend newsletter' });
+  }
+}
+
+/** PATCH /api/admin/newsletter-subscriptions/:id – correct a mistyped address. Requires CONTENT_WRITE. */
+export async function updateEmail(req: Request, res: Response): Promise<void> {
+  try {
+    const id = typeof req.params['id'] === 'string' ? req.params['id'] : '';
+    if (!ObjectId.isValid(id)) {
+      res.status(400).json({ error: 'Invalid id' });
+      return;
+    }
+    const raw = (req.body as { email?: unknown })?.email;
+    const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!EMAIL_REGEX.test(email)) {
+      res.status(400).json({ error: 'A valid email is required' });
+      return;
+    }
+    const _id = new ObjectId(id);
+    const coll = getNewsletterSubscriptionCollection();
+    if (await coll.countDocuments({ email, _id: { $ne: _id } }, { limit: 1 })) {
+      res.status(409).json({ error: `${email} is already on the list` });
+      return;
+    }
+    const result = await coll.updateOne({ _id }, { $set: { email } });
+    if (result.matchedCount === 0) {
+      res.status(404).json({ error: 'Subscription not found' });
+      return;
+    }
+    res.json({ ok: true, email });
+  } catch (err) {
+    console.error('Newsletter email update error:', err);
+    res.status(500).json({ error: 'Failed to update email' });
   }
 }
